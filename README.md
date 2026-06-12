@@ -6,6 +6,12 @@ Rift hatches a unique crustacean companion derived from your machine's identity,
 
 ## Installation
 
+### Method 1: PowerShell (Recommended)
+```powershell
+irm https://raw.githubusercontent.com/turtle170/Rift/main/install.ps1 | iex
+```
+
+### Method 2: NPM
 ```powershell
 npm install -g @turtle170/rift
 ```
