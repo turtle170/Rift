@@ -1,0 +1,72 @@
+[package]
+name = "rift"
+version = "0.1.0"
+edition = "2021"
+authors = ["turtle170"]
+description = "Rift — your desktop pet code reviewer"
+license = "Apache-2.0"
+repository = "https://github.com/turtle170/Rift"
+readme = "README.md"
+
+[[bin]]
+name = "rift"
+path = "src/main.rs"
+
+[dependencies]
+# CLI
+clap = { version = "4", features = ["derive"] }
+
+# TUI
+ratatui = "0.29"
+crossterm = "0.28"
+
+# Tree-sitter core
+tree-sitter = "0.25"
+tree-sitter-rust = "0.23"
+tree-sitter-python = "0.23"
+tree-sitter-javascript = "0.23"
+tree-sitter-typescript = "0.23"
+tree-sitter-c = "0.23"
+tree-sitter-cpp = "0.23"
+tree-sitter-go = "0.23"
+tree-sitter-java = "0.23"
+
+# Windows registry
+winreg = "0.52"
+
+# Serialization / config
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
+
+# Hashing (for deterministic name/stats from GUID)
+sha2 = "0.10"
+
+# Async runtime + HTTP
+tokio = { version = "1", features = ["full"] }
+reqwest = { version = "0.12", features = ["stream", "rustls-tls"], default-features = false }
+
+# Progress bars
+indicatif = { version = "0.17", features = ["rayon"] }
+
+# Directory paths
+dirs = "5"
+
+# ZIP extraction
+zip = "2"
+
+# File walking + .gitignore awareness
+ignore = "0.4"
+
+# Error handling
+anyhow = "1"
+thiserror = "2"
+
+# Misc utilities
+unicode-width = "0.2"
+futures-util = "0.3"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true
