@@ -7,7 +7,7 @@ Rift hatches a unique crustacean companion derived from your machine's identity,
 ## Installation
 
 ```powershell
-npm install -g rift
+npm install -g @turtle170/rift
 ```
 
 > **Windows 11 x64 only.** Requires Node.js 18+.
