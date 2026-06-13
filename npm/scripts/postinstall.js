@@ -34,6 +34,9 @@ async function fetchJson(url) {
         'Accept': 'application/vnd.github+json',
       },
     }, res => {
+      if (res.statusCode !== 200) {
+        return reject(new Error(`HTTP status ${res.statusCode}`));
+      }
       let data = '';
       res.on('data', c => data += c);
       res.on('end', () => {
@@ -72,14 +75,22 @@ async function main() {
     return;
   }
 
-  log('Fetching latest release info from GitHub...');
+  const pkg = require('../package.json');
+  const version = pkg.version;
+  const tag = `v${version}`;
+  log(`Fetching release info for tag ${tag} from GitHub...`);
   let release;
   try {
-    release = await fetchJson(`https://api.github.com/repos/${REPO}/releases/latest`);
+    release = await fetchJson(`https://api.github.com/repos/${REPO}/releases/tags/${tag}`);
   } catch (e) {
-    err(`Failed to fetch release info: ${e.message}`);
-    err('You can manually download rift.exe from: https://github.com/' + REPO + '/releases/latest');
-    process.exit(1);
+    warn(`Failed to fetch release for tag ${tag}: ${e.message}. Falling back to latest release...`);
+    try {
+      release = await fetchJson(`https://api.github.com/repos/${REPO}/releases/latest`);
+    } catch (e2) {
+      err(`Failed to fetch latest release info: ${e2.message}`);
+      err('You can manually download rift.exe from: https://github.com/' + REPO + '/releases/latest');
+      process.exit(1);
+    }
   }
 
   const assets = release.assets || [];
