@@ -31,6 +31,22 @@ enum Commands {
         #[arg(short, long, default_value = "50")]
         max_files: usize,
     },
+    /// Roast the user on every mistake they make
+    Roast {
+        /// Path to analyze (file or directory)
+        path: String,
+        /// Maximum files to analyze (default: 50)
+        #[arg(short, long, default_value = "50")]
+        max_files: usize,
+    },
+    /// Ask the user interrogating questions about their code
+    Grill {
+        /// Path to analyze (file or directory)
+        path: String,
+        /// Maximum files to analyze (default: 50)
+        #[arg(short, long, default_value = "50")]
+        max_files: usize,
+    },
 }
 
 #[tokio::main]
@@ -42,7 +58,13 @@ async fn main() -> Result<()> {
             commands::hatch::run().await?;
         }
         Commands::Analyze { path, max_files } => {
-            commands::analyze::run(&path, max_files).await?;
+            commands::analyze::run(&path, max_files, commands::analyze::AnalyzeMode::Analyze).await?;
+        }
+        Commands::Roast { path, max_files } => {
+            commands::analyze::run(&path, max_files, commands::analyze::AnalyzeMode::Roast).await?;
+        }
+        Commands::Grill { path, max_files } => {
+            commands::analyze::run(&path, max_files, commands::analyze::AnalyzeMode::Grill).await?;
         }
     }
 

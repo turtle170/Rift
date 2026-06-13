@@ -4,6 +4,7 @@ use std::path::Path;
 use std::process::{Command, Stdio};
 use std::sync::mpsc;
 
+use crate::commands::analyze::AnalyzeMode;
 use crate::pet::PetIdentity;
 
 pub struct LlmOutput {
@@ -11,7 +12,7 @@ pub struct LlmOutput {
 }
 
 /// Build the personality-driven system prompt from the pet's stats.
-pub fn build_prompt(pet: &PetIdentity, code_summary: &str) -> String {
+pub fn build_prompt(pet: &PetIdentity, code_summary: &str, mode: AnalyzeMode) -> String {
     let s = &pet.stats;
 
     let debug_tone = if s.debuggability > 170 {
@@ -62,6 +63,18 @@ pub fn build_prompt(pet: &PetIdentity, code_summary: &str) -> String {
         "You are blunt and harsh — no sugar-coating."
     };
 
+    let mode_directive = match mode {
+        AnalyzeMode::Analyze => {
+            "You are reviewing code. Stay in character. Generate questions, observations, and comments\nthat reflect your personality traits. Do NOT simply list every function — focus on what\ninterests, concerns, or confuses you given your traits. Be concise but distinct."
+        }
+        AnalyzeMode::Roast => {
+            "MODE OVERRIDE: You are in ROAST mode. Your empathy is completely gone, and your pedantry is at maximum.\nYou must absolutely roast the user on every single mistake they make. Be harsh, merciless, and brutally critical.\nKeep your underlying personality flavor, but turn it into a weapon of code destruction. Be concise but devastating."
+        }
+        AnalyzeMode::Grill => {
+            "MODE OVERRIDE: You are in GRILL mode. You must act as an interrogator.\nInstead of just pointing out flaws, you must ask the user difficult, probing questions about their code.\nMake them justify every decision, architectural choice, and line of code. Demand explanations.\nStay in character, but be relentlessly interrogative."
+        }
+    };
+
     format!(
         r#"You are {name}, a crustacean code-reviewer with the following personality:
 - Debugging instinct ({debuggability}/255): {debug_tone}
@@ -71,9 +84,7 @@ pub fn build_prompt(pet: &PetIdentity, code_summary: &str) -> String {
 - Pedantry ({pedantry}/255): {pedantry_tone}
 - Empathy ({empathy}/255): {empathy_tone}
 
-You are reviewing code. Stay in character. Generate questions, observations, and comments
-that reflect your personality traits. Do NOT simply list every function — focus on what
-interests, concerns, or confuses you given your traits. Be concise but distinct.
+{mode_directive}
 
 === CODE SUMMARY ===
 {summary}
@@ -93,6 +104,7 @@ Your review:"#,
         chat_tone = chat_tone,
         pedantry_tone = pedantry_tone,
         empathy_tone = empathy_tone,
+        mode_directive = mode_directive,
         summary = code_summary,
     )
 }

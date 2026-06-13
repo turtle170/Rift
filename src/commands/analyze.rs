@@ -22,7 +22,14 @@ struct ClawResult {
     parsed: Vec<ParsedFile>,
 }
 
-pub async fn run(path: &str, max_files: usize) -> Result<()> {
+#[derive(Clone, Copy)]
+pub enum AnalyzeMode {
+    Analyze,
+    Roast,
+    Grill,
+}
+
+pub async fn run(path: &str, max_files: usize, mode: AnalyzeMode) -> Result<()> {
     // ── Ensure pet is hatched ────────────────────────────────────────────────
     let pet = load_pet()?.ok_or_else(|| {
         anyhow::anyhow!(
@@ -45,7 +52,7 @@ pub async fn run(path: &str, max_files: usize) -> Result<()> {
     let tui_tx_clone = tui_tx.clone();
     tokio::spawn(async move {
         let result =
-            orchestrate_claws(&pet_clone, &path_owned, max_files, tui_tx_clone.clone()).await;
+            orchestrate_claws(&pet_clone, &path_owned, max_files, mode, tui_tx_clone.clone()).await;
         if let Err(e) = result {
             let _ = tui_tx_clone.send(TuiMsg::Output(format!("\n\x1b[31mError:\x1b[0m {e}")));
         }
@@ -63,6 +70,7 @@ async fn orchestrate_claws(
     pet: &crate::pet::PetIdentity,
     path: &str,
     max_files: usize,
+    mode: AnalyzeMode,
     tui_tx: tokio_mpsc::UnboundedSender<TuiMsg>,
 ) -> Result<()> {
     let root = Path::new(path);
@@ -150,7 +158,7 @@ async fn orchestrate_claws(
     let summary = build_summary_from_refs(&refs);
 
     // Step 6: Build prompt
-    let prompt = build_prompt(pet, &summary);
+    let prompt = build_prompt(pet, &summary, mode);
 
     // Step 7: Spawn LLM (blocking subprocess — run in blocking thread)
     let _ = tui_tx.send(TuiMsg::Status(format!(
