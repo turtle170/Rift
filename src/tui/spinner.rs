@@ -1,7 +1,7 @@
 use crossterm::style::Color;
 use std::time::{Duration, Instant};
 
-/// The 3-phase spinner state.
+/// The 3-phase main spinner state.
 pub struct Spinner {
     phase: Phase,
     frame: usize,
@@ -15,7 +15,7 @@ enum Phase {
     Braille,
     /// Phase 2: rainbow filled circle ● (runs 2 full cycles)
     Rainbow,
-    /// Phase 3: flashing ●/○ (runs indefinitely until next full loop)
+    /// Phase 3: flashing ●/○ (runs 8 flashes then loops)
     Flash,
 }
 
@@ -23,7 +23,7 @@ enum Phase {
 const BRAILLE: &[char] = &['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 
 /// Rainbow colors cycling through the spectrum
-const RAINBOW: &[Color] = &[
+pub const RAINBOW: &[Color] = &[
     Color::Red,
     Color::Rgb { r: 255, g: 127, b: 0 }, // orange
     Color::Yellow,
@@ -115,4 +115,37 @@ impl Spinner {
 pub struct SpinnerFrame {
     pub symbol: String,
     pub color: Color,
+}
+
+// ── Claw Snap animation ────────────────────────────────────────────────────
+// Three frames cycling: ⠯ → ⠮ → ▄ → ⠯ …  at the same 80ms tick rate.
+
+const CLAW_FRAMES: &[&str] = &["⠯", "⠮", "▄"];
+
+pub struct ClawSnap {
+    frame: usize,
+    last_tick: Instant,
+}
+
+impl ClawSnap {
+    pub fn new() -> Self {
+        ClawSnap {
+            frame: 0,
+            last_tick: Instant::now(),
+        }
+    }
+
+    pub fn tick(&mut self) -> bool {
+        if self.last_tick.elapsed() < Duration::from_millis(TICK_MS) {
+            return false;
+        }
+        self.last_tick = Instant::now();
+        self.frame = (self.frame + 1) % CLAW_FRAMES.len();
+        true
+    }
+
+    /// Current snap character.
+    pub fn symbol(&self) -> &'static str {
+        CLAW_FRAMES[self.frame]
+    }
 }

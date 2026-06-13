@@ -1,17 +1,29 @@
 use anyhow::{bail, Context, Result};
+use rayon::prelude::*;
 use std::path::Path;
-use std::sync::mpsc;
-use std::thread;
-
-use crate::analysis::{markdown::build_summary, parser::parse_file, walker::walk_path};
-use crate::llm::{
-    runner::{build_prompt, spawn_llm},
+use std::sync::{
+    atomic::{AtomicUsize, Ordering},
+    Arc,
 };
+use tokio::sync::mpsc as tokio_mpsc;
+
+use crate::analysis::{
+    markdown::{build_summary_from_refs, ParsedFileRef},
+    parser::{parse_file, ParsedFile},
+    walker::{walk_path, SourceFile},
+};
+use crate::llm::runner::{build_prompt, spawn_llm};
 use crate::pet::storage::{llama_cli_path, load_pet, model_path};
-use crate::tui::output::run_output_tui;
+use crate::tui::output::{run_output_tui, TuiMsg};
+
+/// One "Claw" handles one chunk of source files in a Tokio task.
+/// Rayon is used inside for parallel Tree-sitter parsing within the chunk.
+struct ClawResult {
+    parsed: Vec<ParsedFile>,
+}
 
 pub async fn run(path: &str, max_files: usize) -> Result<()> {
-    // ── Ensure pet is hatched ─────────────────────────────────────────────────
+    // ── Ensure pet is hatched ────────────────────────────────────────────────
     let pet = load_pet()?.ok_or_else(|| {
         anyhow::anyhow!(
             "No Rift pet found! Run \x1b[36mrift hatch\x1b[0m first to hatch your companion."
@@ -23,89 +35,155 @@ pub async fn run(path: &str, max_files: usize) -> Result<()> {
         bail!("Path does not exist: {}", path);
     }
 
-    let (status_tx, status_rx) = mpsc::channel::<String>();
-    let (output_tx, output_rx) = mpsc::channel::<String>();
+    // TUI channel: all worker messages go here
+    let (tui_tx, tui_rx) = tokio_mpsc::unbounded_channel::<TuiMsg>();
 
     let pet_clone = pet.clone();
     let path_owned = path.to_string();
 
-    // ── Spawn analysis + LLM thread ───────────────────────────────────────────
-    thread::spawn(move || {
-        let result = analysis_thread(
-            &pet_clone,
-            &path_owned,
-            max_files,
-            status_tx.clone(),
-            output_tx.clone(),
-        );
+    // ── Spawn orchestrator task ──────────────────────────────────────────────
+    let tui_tx_clone = tui_tx.clone();
+    tokio::spawn(async move {
+        let result =
+            orchestrate_claws(&pet_clone, &path_owned, max_files, tui_tx_clone.clone()).await;
         if let Err(e) = result {
-            let _ = output_tx.send(format!("\n\x1b[31mError:\x1b[0m {e}"));
+            let _ = tui_tx_clone.send(TuiMsg::Output(format!("\n\x1b[31mError:\x1b[0m {e}")));
         }
-        let _ = status_tx.send("__DONE__".to_string());
-        let _ = output_tx.send("__DONE__".to_string());
+        let _ = tui_tx_clone.send(TuiMsg::Done);
     });
 
-    // ── Run TUI on main thread ────────────────────────────────────────────────
-    run_output_tui(&pet, status_rx, output_rx)?;
+    // ── Run TUI on main thread (blocking) ───────────────────────────────────
+    run_output_tui(&pet, tui_rx)?;
 
     Ok(())
 }
 
-fn analysis_thread(
+/// Orchestrate all Claw workers asynchronously, merge results, build Markdown, call LLM.
+async fn orchestrate_claws(
     pet: &crate::pet::PetIdentity,
     path: &str,
     max_files: usize,
-    status_tx: mpsc::Sender<String>,
-    output_tx: mpsc::Sender<String>,
+    tui_tx: tokio_mpsc::UnboundedSender<TuiMsg>,
 ) -> Result<()> {
     let root = Path::new(path);
 
-    // Step 1: Walk & parse
-    let _ = status_tx.send(format!("Walking {}…", path));
-    let source_files = walk_path(root, max_files)
-        .with_context(|| format!("Failed to walk {path}"))?;
+    // Step 1: Walk (synchronous, fast)
+    let _ = tui_tx.send(TuiMsg::Status(format!("Walking {}…", path)));
+    let source_files: Vec<SourceFile> =
+        walk_path(root, max_files).with_context(|| format!("Failed to walk {path}"))?;
 
     if source_files.is_empty() {
-        let _ = output_tx.send(format!(
+        let _ = tui_tx.send(TuiMsg::Output(format!(
             "No supported source files found in `{path}`.\n\
              Supported languages: Rust, Python, JS, TS, C, C++, Go, Java"
-        ));
+        )));
         return Ok(());
     }
 
-    let _ = status_tx.send(format!(
-        "Parsing {} files with Tree-sitter…",
-        source_files.len()
-    ));
+    // Step 2: Chunk files — one Claw per file (up to 16 concurrent claws)
+    let chunks: Vec<Vec<SourceFile>> = chunk_files(source_files, 16);
+    let total_claws = chunks.len();
 
-    let mut parsed = Vec::new();
-    for sf in &source_files {
-        match parse_file(sf) {
-            Ok(pf) => parsed.push(pf),
+    let _ = tui_tx.send(TuiMsg::Status(format!(
+        "Spawning {} Claws for {} files…",
+        total_claws,
+        chunks.iter().map(|c| c.len()).sum::<usize>()
+    )));
+    let _ = tui_tx.send(TuiMsg::ClawCount(total_claws));
+
+    // Active claw counter (shared across tasks)
+    let active_claws = Arc::new(AtomicUsize::new(total_claws));
+
+    // Step 3: Spawn a Tokio task per chunk ("Claw")
+    let mut handles = Vec::with_capacity(total_claws);
+    for chunk in chunks {
+        let tui_tx2 = tui_tx.clone();
+        let active = Arc::clone(&active_claws);
+
+        let handle = tokio::spawn(async move {
+            // Each Claw uses Rayon to parse its chunk in parallel
+            let parsed: Vec<ParsedFile> = chunk
+                .into_par_iter()
+                .filter_map(|sf| {
+                    match parse_file(&sf) {
+                        Ok(pf) => Some(pf),
+                        Err(e) => {
+                            let _ = tui_tx2
+                                .send(TuiMsg::Output(format!("  ⚠ Skipping {}: {e}", sf.path)));
+                            None
+                        }
+                    }
+                })
+                .collect();
+
+            // Claw finished — decrement active count and report
+            let remaining = active.fetch_sub(1, Ordering::SeqCst) - 1;
+            let _ = tui_tx2.send(TuiMsg::ClawCount(remaining));
+
+            ClawResult { parsed }
+        });
+        handles.push(handle);
+    }
+
+    // Step 4: Collect all results
+    let mut all_parsed: Vec<ParsedFile> = Vec::new();
+    for handle in handles {
+        match handle.await {
+            Ok(result) => all_parsed.extend(result.parsed),
             Err(e) => {
-                let _ = output_tx.send(format!("  ⚠ Skipping {}: {e}", sf.path));
+                let _ = tui_tx.send(TuiMsg::Output(format!("  ⚠ Claw task panicked: {e}")));
             }
         }
     }
 
-    // Step 2: Build Markdown summary
-    let _ = status_tx.send("Building code summary…".to_string());
-    let summary = build_summary(&parsed);
+    let _ = tui_tx.send(TuiMsg::ClawCount(0));
 
-    // Step 3: Build prompt
+    // Step 5: Build Markdown summary with embedded S-expressions
+    let _ = tui_tx.send(TuiMsg::Status("Building S-expression Markdown…".to_string()));
+    let refs: Vec<ParsedFileRef<'_>> = all_parsed
+        .iter()
+        .map(|pf| ParsedFileRef {
+            source_file: &pf.source_file,
+            tree: &pf.tree,
+        })
+        .collect();
+    let summary = build_summary_from_refs(&refs);
+
+    // Step 6: Build prompt
     let prompt = build_prompt(pet, &summary);
 
-    // Step 4: Spawn LLM
-    let _ = status_tx.send(format!("Generating review with {}…", pet.name()));
+    // Step 7: Spawn LLM (blocking subprocess — run in blocking thread)
+    let _ = tui_tx.send(TuiMsg::Status(format!(
+        "Generating review with {}…",
+        pet.name()
+    )));
     let llama_cli = llama_cli_path();
     let model = model_path();
 
-    let llm = spawn_llm(&llama_cli, &model, &prompt)?;
+    let llm = tokio::task::spawn_blocking(move || spawn_llm(&llama_cli, &model, &prompt))
+        .await
+        .context("LLM spawn thread panicked")??;
 
-    // Step 5: Stream output
+    // Step 8: Stream output
     while let Ok(line) = llm.rx.recv() {
-        let _ = output_tx.send(line);
+        let _ = tui_tx.send(TuiMsg::Output(line));
     }
 
     Ok(())
+}
+
+/// Split `files` into `max_chunks` chunks (one per Claw).
+/// Each chunk contains at least 1 file; empty chunks are dropped.
+fn chunk_files(files: Vec<SourceFile>, max_chunks: usize) -> Vec<Vec<SourceFile>> {
+    if files.is_empty() {
+        return vec![];
+    }
+    let n = files.len();
+    let chunk_size = ((n + max_chunks - 1) / max_chunks).max(1);
+    files
+        .into_iter()
+        .collect::<Vec<_>>()
+        .chunks(chunk_size)
+        .map(|c| c.to_vec())
+        .collect()
 }
