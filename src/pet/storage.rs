@@ -74,5 +74,5 @@ pub fn gemma_model_path(pet: Option<&PetIdentity>) -> PathBuf {
 }
 
 pub fn qwen3_model_path(pet: Option<&PetIdentity>) -> PathBuf {
-    models_dir(pet).join("qwen3-coder-next-iq4_nl.gguf")
+    models_dir(pet).join("Qwen3-Coder-Next-UD-IQ4_NL.gguf")
 }

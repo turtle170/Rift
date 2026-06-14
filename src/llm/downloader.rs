@@ -20,7 +20,7 @@ const GEMMA_MODEL_URL: &str =
     "https://huggingface.co/unsloth/gemma-4-E4B-it-GGUF/resolve/main/gemma-4-E4B-it-Q6_K.gguf";
 
 const QWEN3_MODEL_URL: &str =
-    "https://huggingface.co/unsloth/Qwen3-Coder-Next-GGUF/resolve/main/qwen3-coder-next-iq4_nl.gguf";
+    "https://huggingface.co/unsloth/Qwen3-Coder-Next-GGUF/resolve/main/Qwen3-Coder-Next-UD-IQ4_NL.gguf?download=true";
 
 pub struct Downloader {
     client: Client,
@@ -86,7 +86,7 @@ impl Downloader {
         }
 
         if !no_boost {
-            let qwen_path = dest_dir.join("qwen3-coder-next-iq4_nl.gguf");
+            let qwen_path = dest_dir.join("Qwen3-Coder-Next-UD-IQ4_NL.gguf");
             if qwen_path.exists() && std::fs::metadata(&qwen_path)?.len() > 1_000_000_000 {
                 println!("  ✓ Qwen3 Model already present, skipping download.");
             } else {
