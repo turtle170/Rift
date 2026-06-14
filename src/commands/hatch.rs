@@ -11,9 +11,9 @@ use crate::pet::identity::{derive_identity, read_machine_guid};
 use crate::pet::storage::{llama_dir, load_pet, models_dir, save_pet};
 use crate::tui::spinner::Spinner;
 
-pub async fn run(no_boost: bool) -> Result<()> {
+pub async fn run(no_boost: bool, redo: bool, download_dir: Option<String>) -> Result<()> {
     // ── Check if already hatched ──────────────────────────────────────────────
-    let (pet, newly_hatched) = if let Some(existing_pet) = load_pet()? {
+    let (mut pet, newly_hatched) = if let Some(existing_pet) = load_pet()? {
         (existing_pet, false)
     } else {
         println!();
@@ -24,9 +24,16 @@ pub async fn run(no_boost: bool) -> Result<()> {
 
         let guid = read_machine_guid()?;
         let p = derive_identity(&guid);
-        save_pet(&p)?;
         (p, true)
     };
+
+    // ── Update custom directory if provided ──────────────────────────────────
+    if let Some(dir) = download_dir {
+        pet.custom_models_dir = Some(dir);
+        save_pet(&pet)?;
+    } else if newly_hatched {
+        save_pet(&pet)?;
+    }
 
     println!();
     print_pet_card(&pet.prefix, &pet.adjective, &pet.noun, &pet.stats)?;
@@ -35,6 +42,11 @@ pub async fn run(no_boost: bool) -> Result<()> {
     if !newly_hatched {
         println!("  Your Rift is already hatched! Verifying dependencies...");
         println!();
+    }
+
+    if redo {
+        println!("  \x1b[31m🗑\x1b[0m  Deleting existing models directory (--redo)...");
+        let _ = std::fs::remove_dir_all(&crate::pet::storage::models_dir(Some(&pet)));
     }
 
     // ── Download llama.cpp (GPU-aware) ────────────────────────────────────────
@@ -46,7 +58,7 @@ pub async fn run(no_boost: bool) -> Result<()> {
 
     println!("  \x1b[33m⬇\x1b[0m  Acquiring LLM models...");
     println!("     \x1b[90mDownload is resumable — feel free to Ctrl+C and continue later.\x1b[0m");
-    dl.download_models(&models_dir(), no_boost).await?;
+    dl.download_models(&models_dir(Some(&pet)), no_boost).await?;
     println!("  \x1b[32m✓\x1b[0m  Models ready");
     println!();
 

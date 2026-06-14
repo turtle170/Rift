@@ -194,7 +194,7 @@ async fn orchestrate_balanced(
         pet.name()
     )));
     let llama_cli = crate::pet::storage::llama_cli_path();
-    let model = crate::pet::storage::gemma_model_path();
+    let model = crate::pet::storage::gemma_model_path(Some(pet));
 
     let llm = tokio::task::spawn_blocking(move || spawn_llm(&llama_cli, &model, &prompt))
         .await

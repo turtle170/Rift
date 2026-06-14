@@ -36,6 +36,12 @@ enum Commands {
         /// Skip downloading the massive Qwen3 Boost model
         #[arg(long)]
         no_boost: bool,
+        /// Force delete and re-download all GGUF models
+        #[arg(long)]
+        redo: bool,
+        /// Custom path to download the massive GGUF models to
+        #[arg(long)]
+        download_dir: Option<String>,
     },
     /// Analyze code at the given path with your pet's commentary
     Analyze {
@@ -109,8 +115,8 @@ async fn main() -> Result<()> {
     };
 
     match cli.command {
-        Commands::Hatch { no_boost } => {
-            commands::hatch::run(no_boost).await?;
+        Commands::Hatch { no_boost, redo, download_dir } => {
+            commands::hatch::run(no_boost, redo, download_dir.clone()).await?;
         }
         Commands::Analyze { path, max_files, .. } => {
             commands::analyze::run(&path, max_files, commands::analyze::AnalyzeMode::Analyze, engine_mode).await?;

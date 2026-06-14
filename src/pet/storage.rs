@@ -52,7 +52,12 @@ pub fn llama_dir() -> PathBuf {
     data_dir().join("llama")
 }
 
-pub fn models_dir() -> PathBuf {
+pub fn models_dir(pet: Option<&PetIdentity>) -> PathBuf {
+    if let Some(p) = pet {
+        if let Some(ref custom_dir) = p.custom_models_dir {
+            return PathBuf::from(custom_dir);
+        }
+    }
     data_dir().join("models")
 }
 
@@ -64,10 +69,10 @@ pub fn llama_server_path() -> PathBuf {
     llama_dir().join("llama-server.exe")
 }
 
-pub fn gemma_model_path() -> PathBuf {
-    models_dir().join("gemma-4-E4B-it-Q6_K.gguf")
+pub fn gemma_model_path(pet: Option<&PetIdentity>) -> PathBuf {
+    models_dir(pet).join("gemma-4-E4B-it-Q6_K.gguf")
 }
 
-pub fn qwen3_model_path() -> PathBuf {
-    models_dir().join("qwen3-coder-next-iq4_nl.gguf")
+pub fn qwen3_model_path(pet: Option<&PetIdentity>) -> PathBuf {
+    models_dir(pet).join("qwen3-coder-next-iq4_nl.gguf")
 }

@@ -63,6 +63,8 @@ pub struct PetIdentity {
     pub stats: PetStats,
     #[serde(default)]
     pub engine_mode: AnalysisEngine,
+    #[serde(default)]
+    pub custom_models_dir: Option<String>,
 }
 
 impl PetIdentity {
@@ -110,6 +112,7 @@ pub fn derive_identity(guid: &str) -> PetIdentity {
         noun,
         stats,
         engine_mode: AnalysisEngine::Balanced,
+        custom_models_dir: None,
     }
 }
 

@@ -192,7 +192,7 @@ pub async fn run_agent_loop(
     let _ = tui_tx.send(TuiMsg::Status("Starting llama-server.exe for Boost mode…".into()));
     
     let server_path = crate::pet::storage::llama_server_path();
-    let model_path = crate::pet::storage::qwen3_model_path();
+    let model_path = crate::pet::storage::qwen3_model_path(Some(pet));
 
     if !server_path.exists() || !model_path.exists() {
         bail!("llama-server.exe or Qwen3 model not found. Run `rift hatch` first.");
