@@ -207,6 +207,7 @@ pub async fn run_agent_loop(
             "--ctk", "q4_0", // TurboQuant 4-bit context
             "--threads", &cpu_threads.to_string(),
             "--port", "8080",
+            "--mmap",
         ])
         .stdout(Stdio::null())
         .stderr(Stdio::null())
