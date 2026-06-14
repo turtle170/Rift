@@ -54,7 +54,12 @@ pub async fn run(path: &str, max_files: usize, mode: AnalyzeMode, engine: crate:
         let result =
             orchestrate_claws(&pet_clone, &path_owned, max_files, mode, engine, tui_tx_clone.clone()).await;
         if let Err(e) = result {
-            let _ = tui_tx_clone.send(TuiMsg::Output(format!("\n\x1b[31mError:\x1b[0m {e}")));
+            // Send each line of the error separately (ratatui can't parse ANSI or \n inside a Line)
+            let _ = tui_tx_clone.send(TuiMsg::Output(String::new()));
+            let err_str = format!("Error: {e}");
+            for line in err_str.lines() {
+                let _ = tui_tx_clone.send(TuiMsg::Output(format!("  {}", line)));
+            }
         }
         let _ = tui_tx_clone.send(TuiMsg::Done);
     });

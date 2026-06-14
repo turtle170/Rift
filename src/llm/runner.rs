@@ -163,18 +163,37 @@ pub fn spawn_llm(
     let (tx, rx) = mpsc::channel::<String>();
 
     std::thread::spawn(move || {
-        let reader = BufReader::new(stdout);
-        for line in reader.lines() {
-            match line {
-                Ok(l) => {
-                    if tx.send(l).is_err() {
-                        break;
+        use std::io::Read;
+        let mut reader = BufReader::new(stdout);
+        let mut current_line = String::new();
+        let mut buf = [0u8; 256];
+
+        loop {
+            match reader.read(&mut buf) {
+                Ok(0) => break, // EOF
+                Ok(n) => {
+                    let chunk = String::from_utf8_lossy(&buf[..n]);
+                    for c in chunk.chars() {
+                        if c == '\n' {
+                            if tx.send(current_line.clone()).is_err() { return; }
+                            current_line.clear();
+                        } else {
+                            current_line.push(c);
+                            // Flush partial line every 80 chars for real-time feel
+                            if current_line.len() >= 80 {
+                                if tx.send(current_line.clone()).is_err() { return; }
+                                current_line.clear();
+                            }
+                        }
                     }
                 }
                 Err(_) => break,
             }
         }
-        // Wait for child process to finish
+        // Flush remaining
+        if !current_line.is_empty() {
+            let _ = tx.send(current_line);
+        }
         let _ = child.wait();
     });
 
