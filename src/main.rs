@@ -32,7 +32,11 @@ struct ModeArgs {
 #[derive(Subcommand)]
 enum Commands {
     /// Hatch your Rift pet (run once to initialize)
-    Hatch,
+    Hatch {
+        /// Skip downloading the massive Qwen3 Boost model
+        #[arg(long)]
+        no_boost: bool,
+    },
     /// Analyze code at the given path with your pet's commentary
     Analyze {
         /// Path to analyze (file or directory)
@@ -73,7 +77,7 @@ async fn main() -> Result<()> {
     let mut pet = match pet::storage::load_pet()? {
         Some(p) => p,
         None => {
-            if !matches!(cli.command, Commands::Hatch) {
+            if !matches!(cli.command, Commands::Hatch { .. }) {
                 anyhow::bail!("No Rift pet found! Run `rift hatch` first to hatch your companion.");
             }
             // Dummy pet for Hatch (will be overwritten during hatch)
@@ -105,8 +109,8 @@ async fn main() -> Result<()> {
     };
 
     match cli.command {
-        Commands::Hatch => {
-            commands::hatch::run().await?;
+        Commands::Hatch { no_boost } => {
+            commands::hatch::run(no_boost).await?;
         }
         Commands::Analyze { path, max_files, .. } => {
             commands::analyze::run(&path, max_files, commands::analyze::AnalyzeMode::Analyze, engine_mode).await?;

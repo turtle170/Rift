@@ -11,30 +11,31 @@ use crate::pet::identity::{derive_identity, read_machine_guid};
 use crate::pet::storage::{llama_dir, load_pet, models_dir, save_pet};
 use crate::tui::spinner::Spinner;
 
-pub async fn run() -> Result<()> {
+pub async fn run(no_boost: bool) -> Result<()> {
     // ── Check if already hatched ──────────────────────────────────────────────
-    if let Some(pet) = load_pet()? {
+    let (pet, newly_hatched) = if let Some(existing_pet) = load_pet()? {
+        (existing_pet, false)
+    } else {
         println!();
-        print_pet_card(&pet.prefix, &pet.adjective, &pet.noun, &pet.stats)?;
+        println!("  \x1b[36m🦞 Rift is hatching...\x1b[0m");
         println!();
-        println!("  Your Rift is already hatched! Run \x1b[36mrift analyze <path>\x1b[0m to review code.");
-        println!();
-        return Ok(());
-    }
 
-    // ── Read MachineGuid & derive identity ───────────────────────────────────
+        run_hatch_animation()?;
+
+        let guid = read_machine_guid()?;
+        let p = derive_identity(&guid);
+        save_pet(&p)?;
+        (p, true)
+    };
+
     println!();
-    println!("  \x1b[36m🦞 Rift is hatching...\x1b[0m");
-    println!();
-
-    run_hatch_animation()?;
-
-    let guid = read_machine_guid()?;
-    let pet = derive_identity(&guid);
-
-    // ── Display pet card ──────────────────────────────────────────────────────
     print_pet_card(&pet.prefix, &pet.adjective, &pet.noun, &pet.stats)?;
     println!();
+
+    if !newly_hatched {
+        println!("  Your Rift is already hatched! Verifying dependencies...");
+        println!();
+    }
 
     // ── Download llama.cpp (GPU-aware) ────────────────────────────────────────
     println!("  \x1b[33m⬇\x1b[0m  Acquiring llama.cpp...");
@@ -43,17 +44,17 @@ pub async fn run() -> Result<()> {
     println!("  \x1b[32m✓\x1b[0m  llama.cpp ready ({})", gpu_kind.label());
     println!();
 
-    // ── Download Gemma 4 and Qwen3 ─────────────────────────────────────────────
-    println!("  \x1b[33m⬇\x1b[0m  Acquiring LLM models (~14.4 GB total)...");
+    println!("  \x1b[33m⬇\x1b[0m  Acquiring LLM models...");
     println!("     \x1b[90mDownload is resumable — feel free to Ctrl+C and continue later.\x1b[0m");
-    dl.download_models(&models_dir()).await?;
+    dl.download_models(&models_dir(), no_boost).await?;
     println!("  \x1b[32m✓\x1b[0m  Models ready");
     println!();
 
-    // ── Persist ────────────────────────────────────────────────────────────────
-    save_pet(&pet)?;
-
-    println!("  \x1b[32m✓\x1b[0m  Pet saved. Run \x1b[36mrift analyze <path>\x1b[0m to begin your first review!");
+    if newly_hatched {
+        println!("  \x1b[32m✓\x1b[0m  Pet saved. Run \x1b[36mrift analyze <path>\x1b[0m to begin your first review!");
+    } else {
+        println!("  \x1b[32m✓\x1b[0m  Dependencies updated. Run \x1b[36mrift analyze <path>\x1b[0m to review code.");
+    }
     println!();
 
     Ok(())

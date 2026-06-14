@@ -20,7 +20,7 @@ const GEMMA_MODEL_URL: &str =
     "https://huggingface.co/unsloth/gemma-4-E4B-it-GGUF/resolve/main/gemma-4-E4B-it-Q6_K.gguf";
 
 const QWEN3_MODEL_URL: &str =
-    "https://huggingface.co/Qwen/Qwen3-Coder-Next-IQ4_NL-GGUF/resolve/main/qwen3-coder-next-iq4_nl.gguf";
+    "https://huggingface.co/unsloth/Qwen3-Coder-Next-GGUF/resolve/main/qwen3-coder-next-iq4_nl.gguf";
 
 pub struct Downloader {
     client: Client,
@@ -74,7 +74,7 @@ impl Downloader {
     }
 
     /// Download both Gemma and Qwen3 models to dest_dir, supporting resume.
-    pub async fn download_models(&self, dest_dir: &Path) -> Result<()> {
+    pub async fn download_models(&self, dest_dir: &Path, no_boost: bool) -> Result<()> {
         std::fs::create_dir_all(dest_dir)?;
 
         let gemma_path = dest_dir.join("gemma-4-E4B-it-Q6_K.gguf");
@@ -85,12 +85,16 @@ impl Downloader {
             println!("  ✓ Gemma Model downloaded to {}", gemma_path.display());
         }
 
-        let qwen_path = dest_dir.join("qwen3-coder-next-iq4_nl.gguf");
-        if qwen_path.exists() && std::fs::metadata(&qwen_path)?.len() > 1_000_000_000 {
-            println!("  ✓ Qwen3 Model already present, skipping download.");
+        if !no_boost {
+            let qwen_path = dest_dir.join("qwen3-coder-next-iq4_nl.gguf");
+            if qwen_path.exists() && std::fs::metadata(&qwen_path)?.len() > 1_000_000_000 {
+                println!("  ✓ Qwen3 Model already present, skipping download.");
+            } else {
+                self.download_file_resumable(QWEN3_MODEL_URL, &qwen_path, "Qwen3 Coder Next IQ4_NL (~45.0 GB)").await?;
+                println!("  ✓ Qwen3 Model downloaded to {}", qwen_path.display());
+            }
         } else {
-            self.download_file_resumable(QWEN3_MODEL_URL, &qwen_path, "Qwen3 Coder Next IQ4_NL (~8.0 GB)").await?;
-            println!("  ✓ Qwen3 Model downloaded to {}", qwen_path.display());
+            println!("  ✓ Skipping Qwen3 Model download (--no-boost)");
         }
 
         Ok(())
