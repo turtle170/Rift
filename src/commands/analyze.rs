@@ -13,7 +13,7 @@ use crate::analysis::{
     walker::{walk_path, SourceFile},
 };
 use crate::llm::runner::{build_prompt, spawn_llm};
-use crate::pet::storage::{llama_cli_path, load_pet, model_path};
+use crate::pet::storage::load_pet;
 use crate::tui::output::{run_output_tui, TuiMsg};
 
 /// One "Claw" handles one chunk of source files in a Tokio task.
@@ -29,7 +29,7 @@ pub enum AnalyzeMode {
     Grill,
 }
 
-pub async fn run(path: &str, max_files: usize, mode: AnalyzeMode) -> Result<()> {
+pub async fn run(path: &str, max_files: usize, mode: AnalyzeMode, engine: crate::pet::identity::AnalysisEngine) -> Result<()> {
     // ── Ensure pet is hatched ────────────────────────────────────────────────
     let pet = load_pet()?.ok_or_else(|| {
         anyhow::anyhow!(
@@ -52,7 +52,7 @@ pub async fn run(path: &str, max_files: usize, mode: AnalyzeMode) -> Result<()> 
     let tui_tx_clone = tui_tx.clone();
     tokio::spawn(async move {
         let result =
-            orchestrate_claws(&pet_clone, &path_owned, max_files, mode, tui_tx_clone.clone()).await;
+            orchestrate_claws(&pet_clone, &path_owned, max_files, mode, engine, tui_tx_clone.clone()).await;
         if let Err(e) = result {
             let _ = tui_tx_clone.send(TuiMsg::Output(format!("\n\x1b[31mError:\x1b[0m {e}")));
         }
@@ -67,6 +67,34 @@ pub async fn run(path: &str, max_files: usize, mode: AnalyzeMode) -> Result<()> 
 
 /// Orchestrate all Claw workers asynchronously, merge results, build Markdown, call LLM.
 async fn orchestrate_claws(
+    pet: &crate::pet::PetIdentity,
+    path: &str,
+    max_files: usize,
+    mode: AnalyzeMode,
+    engine: crate::pet::identity::AnalysisEngine,
+    tui_tx: tokio_mpsc::UnboundedSender<TuiMsg>,
+) -> Result<()> {
+    match engine {
+        crate::pet::identity::AnalysisEngine::Balanced => {
+            orchestrate_balanced(pet, path, max_files, mode, tui_tx).await
+        }
+        crate::pet::identity::AnalysisEngine::Boost => {
+            orchestrate_boost(pet, path, max_files, mode, tui_tx).await
+        }
+    }
+}
+
+async fn orchestrate_boost(
+    pet: &crate::pet::PetIdentity,
+    path: &str,
+    max_files: usize,
+    mode: AnalyzeMode,
+    tui_tx: tokio_mpsc::UnboundedSender<TuiMsg>,
+) -> Result<()> {
+    crate::llm::runner::run_agent_loop(pet, path, max_files, mode, tui_tx).await
+}
+
+async fn orchestrate_balanced(
     pet: &crate::pet::PetIdentity,
     path: &str,
     max_files: usize,
@@ -165,8 +193,8 @@ async fn orchestrate_claws(
         "Generating review with {}…",
         pet.name()
     )));
-    let llama_cli = llama_cli_path();
-    let model = model_path();
+    let llama_cli = crate::pet::storage::llama_cli_path();
+    let model = crate::pet::storage::gemma_model_path();
 
     let llm = tokio::task::spawn_blocking(move || spawn_llm(&llama_cli, &model, &prompt))
         .await

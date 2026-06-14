@@ -3,6 +3,8 @@ use std::io::{BufRead, BufReader};
 use std::path::Path;
 use std::process::{Command, Stdio};
 use std::sync::mpsc;
+use tokio::sync::mpsc as tokio_mpsc;
+use crate::tui::output::TuiMsg;
 
 use crate::commands::analyze::AnalyzeMode;
 use crate::pet::PetIdentity;
@@ -140,6 +142,8 @@ pub fn spawn_llm(
             &model.to_string_lossy(),
             "--ctx-size",
             "8192",
+            "--ctk",
+            "q4_0",
             "--threads",
             &cpu_threads.to_string(),
             "--temp",
@@ -176,3 +180,99 @@ pub fn spawn_llm(
 
     Ok(LlmOutput { rx })
 }
+
+/// Spawns llama-server.exe and runs the agent loop.
+pub async fn run_agent_loop(
+    pet: &PetIdentity,
+    path: &str,
+    max_files: usize,
+    mode: AnalyzeMode,
+    tui_tx: tokio_mpsc::UnboundedSender<TuiMsg>,
+) -> Result<()> {
+    let _ = tui_tx.send(TuiMsg::Status("Starting llama-server.exe for Boost mode…".into()));
+    
+    let server_path = crate::pet::storage::llama_server_path();
+    let model_path = crate::pet::storage::qwen3_model_path();
+
+    if !server_path.exists() || !model_path.exists() {
+        bail!("llama-server.exe or Qwen3 model not found. Run `rift hatch` first.");
+    }
+
+    let cpu_threads = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4).min(8) as u32;
+
+    let mut child = Command::new(&server_path)
+        .args([
+            "--model", &model_path.to_string_lossy(),
+            "--ctx-size", "32768",
+            "--ctk", "q4_0", // TurboQuant 4-bit context
+            "--threads", &cpu_threads.to_string(),
+            "--port", "8080",
+        ])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .context("Failed to spawn llama-server.exe")?;
+
+    // Wait for server to boot
+    tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+
+    // Walk files to read initial context
+    let root = Path::new(path);
+    let source_files = crate::analysis::walker::walk_path(root, max_files).unwrap_or_default();
+    let mut file_contents = std::collections::HashMap::new();
+    for f in source_files {
+        if let Ok(c) = std::fs::read_to_string(&f.path) {
+            file_contents.insert(f.path.clone(), c);
+        }
+    }
+
+    let base_prompt = build_prompt(pet, "", mode).replace("=== CODE SUMMARY ===\n\n=== END SUMMARY ===", "You have access to tools via XML tags. Available tools:\n- <GrepClaw pattern=\"...\" />\n- <ExeClaw exe=\"...\" args=\"...\" />\nTo eject a file from context to save tokens, output </ReadClaw path=\"...\">");
+
+    let client = reqwest::Client::new();
+    let mut messages = vec![];
+
+    // Main interaction loop (simplified single-turn for now)
+    let mut current_sys = base_prompt.clone();
+    for (p, c) in &file_contents {
+        current_sys.push_str(&format!("\n<ReadClaw path=\"{}\">\n{}\n</ReadClaw>\n", p, c));
+    }
+    
+    messages.push(serde_json::json!({ "role": "system", "content": current_sys }));
+    messages.push(serde_json::json!({ "role": "user", "content": "Review my code." }));
+
+    let _ = tui_tx.send(TuiMsg::Status("Agent thinking…".into()));
+
+    let body = serde_json::json!({
+        "model": "qwen3",
+        "messages": messages,
+        "temperature": 0.7,
+    });
+
+    let resp = client.post("http://127.0.0.1:8080/v1/chat/completions")
+        .json(&body)
+        .send().await;
+
+    if let Ok(r) = resp {
+        if let Ok(json) = r.json::<serde_json::Value>().await {
+            if let Some(content) = json["choices"][0]["message"]["content"].as_str() {
+                let mut lines = content.lines();
+                while let Some(line) = lines.next() {
+                    let _ = tui_tx.send(TuiMsg::Output(line.to_string()));
+                    
+                    // Simple tool parsing logic could go here
+                    if line.contains("</ReadClaw") {
+                        // Ejected!
+                        let _ = tui_tx.send(TuiMsg::Output(format!("\x1b[35m[EJECTED FILE]\x1b[0m")));
+                    }
+                    if line.contains("<GrepClaw") {
+                        let _ = tui_tx.send(TuiMsg::Output(format!("\x1b[33m[RAN GREP]\x1b[0m")));
+                    }
+                }
+            }
+        }
+    }
+
+    let _ = child.kill();
+    Ok(())
+}
+

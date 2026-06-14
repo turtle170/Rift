@@ -60,6 +60,14 @@ pub fn llama_cli_path() -> PathBuf {
     llama_dir().join("llama-cli.exe")
 }
 
-pub fn model_path() -> PathBuf {
+pub fn llama_server_path() -> PathBuf {
+    llama_dir().join("llama-server.exe")
+}
+
+pub fn gemma_model_path() -> PathBuf {
     models_dir().join("gemma-4-E4B-it-Q6_K.gguf")
+}
+
+pub fn qwen3_model_path() -> PathBuf {
+    models_dir().join("qwen3-coder-next-iq4_nl.gguf")
 }

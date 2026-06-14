@@ -43,11 +43,11 @@ pub async fn run() -> Result<()> {
     println!("  \x1b[32m✓\x1b[0m  llama.cpp ready ({})", gpu_kind.label());
     println!();
 
-    // ── Download Gemma 4 E4B Q6_K ─────────────────────────────────────────────
-    println!("  \x1b[33m⬇\x1b[0m  Acquiring Gemma 4 E4B Q6_K model (~6.4 GB)...");
+    // ── Download Gemma 4 and Qwen3 ─────────────────────────────────────────────
+    println!("  \x1b[33m⬇\x1b[0m  Acquiring LLM models (~14.4 GB total)...");
     println!("     \x1b[90mDownload is resumable — feel free to Ctrl+C and continue later.\x1b[0m");
-    dl.download_model(&models_dir()).await?;
-    println!("  \x1b[32m✓\x1b[0m  Model ready");
+    dl.download_models(&models_dir()).await?;
+    println!("  \x1b[32m✓\x1b[0m  Models ready");
     println!();
 
     // ── Persist ────────────────────────────────────────────────────────────────

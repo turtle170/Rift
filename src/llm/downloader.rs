@@ -16,8 +16,11 @@ const LLAMA_VULKAN_URL: &str =
 const LLAMA_CPU_URL: &str =
     "https://github.com/ggml-org/llama.cpp/releases/download/b9606/llama-b9606-bin-win-cpu-x64.zip";
 
-const MODEL_URL: &str =
+const GEMMA_MODEL_URL: &str =
     "https://huggingface.co/unsloth/gemma-4-E4B-it-GGUF/resolve/main/gemma-4-E4B-it-Q6_K.gguf";
+
+const QWEN3_MODEL_URL: &str =
+    "https://huggingface.co/Qwen/Qwen3-Coder-Next-IQ4_NL-GGUF/resolve/main/qwen3-coder-next-iq4_nl.gguf";
 
 pub struct Downloader {
     client: Client,
@@ -70,23 +73,26 @@ impl Downloader {
         Ok(gpu)
     }
 
-    /// Download the Gemma 4 E4B Q6_K model to dest_dir, supporting resume.
-    pub async fn download_model(&self, dest_dir: &Path) -> Result<()> {
+    /// Download both Gemma and Qwen3 models to dest_dir, supporting resume.
+    pub async fn download_models(&self, dest_dir: &Path) -> Result<()> {
         std::fs::create_dir_all(dest_dir)?;
 
-        let model_path = dest_dir.join("gemma-4-E4B-it-Q6_K.gguf");
-        if model_path.exists() {
-            let meta = std::fs::metadata(&model_path)?;
-            if meta.len() > 1_000_000_000 {
-                println!("  ✓ Model already present, skipping download.");
-                return Ok(());
-            }
+        let gemma_path = dest_dir.join("gemma-4-E4B-it-Q6_K.gguf");
+        if gemma_path.exists() && std::fs::metadata(&gemma_path)?.len() > 1_000_000_000 {
+            println!("  ✓ Gemma Model already present, skipping download.");
+        } else {
+            self.download_file_resumable(GEMMA_MODEL_URL, &gemma_path, "Gemma 4 E4B Q6_K (~6.4 GB)").await?;
+            println!("  ✓ Gemma Model downloaded to {}", gemma_path.display());
         }
 
-        self.download_file_resumable(MODEL_URL, &model_path, "Gemma 4 E4B Q6_K (~6.4 GB)")
-            .await?;
+        let qwen_path = dest_dir.join("qwen3-coder-next-iq4_nl.gguf");
+        if qwen_path.exists() && std::fs::metadata(&qwen_path)?.len() > 1_000_000_000 {
+            println!("  ✓ Qwen3 Model already present, skipping download.");
+        } else {
+            self.download_file_resumable(QWEN3_MODEL_URL, &qwen_path, "Qwen3 Coder Next IQ4_NL (~8.0 GB)").await?;
+            println!("  ✓ Qwen3 Model downloaded to {}", qwen_path.display());
+        }
 
-        println!("  ✓ Model downloaded to {}", model_path.display());
         Ok(())
     }
 

@@ -46,6 +46,14 @@ pub struct PetStats {
     pub empathy: u8,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default, clap::ValueEnum)]
+#[serde(rename_all = "lowercase")]
+pub enum AnalysisEngine {
+    #[default]
+    Balanced,
+    Boost,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PetIdentity {
     pub guid: String,
@@ -53,6 +61,8 @@ pub struct PetIdentity {
     pub adjective: String,
     pub noun: String,
     pub stats: PetStats,
+    #[serde(default)]
+    pub engine_mode: AnalysisEngine,
 }
 
 impl PetIdentity {
@@ -99,6 +109,7 @@ pub fn derive_identity(guid: &str) -> PetIdentity {
         adjective,
         noun,
         stats,
+        engine_mode: AnalysisEngine::Balanced,
     }
 }
 
