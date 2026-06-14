@@ -1,0 +1,85 @@
+name: Build Rift
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build on ${{ matrix.os }} with ${{ matrix.backend }} backend
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [windows-latest]
+        backend: [cpu, vulkan]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+          targets: x86_64-pc-windows-msvc
+
+      - name: Setup LLVM/Clang for bindgen
+        run: |
+          choco install llvm -y
+          echo "LIBCLANG_PATH=C:\Program Files\LLVM\bin" >> $env:GITHUB_ENV
+
+      - name: Setup Vulkan SDK
+        if: matrix.backend == 'vulkan'
+        run: |
+          choco install vulkan-sdk -y
+          # Vulkan SDK usually sets VULKAN_SDK environment variable
+
+      - name: Build (CPU)
+        if: matrix.backend == 'cpu'
+        run: cargo build --release
+
+      - name: Build (Vulkan)
+        if: matrix.backend == 'vulkan'
+        run: cargo build --release --features vulkan
+
+      - name: Rename executable
+        run: |
+          Move-Item target/release/rift.exe target/release/rift-${{ matrix.backend }}.exe
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: rift-${{ matrix.backend }}
+          path: target/release/rift-${{ matrix.backend }}.exe
+
+  release:
+    name: Create GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download CPU Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: rift-cpu
+          path: artifacts
+
+      - name: Download Vulkan Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: rift-vulkan
+          path: artifacts
+
+      - name: Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            artifacts/rift-cpu.exe
+            artifacts/rift-vulkan.exe
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

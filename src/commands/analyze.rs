@@ -198,10 +198,9 @@ async fn orchestrate_balanced(
         "Generating review with {}…",
         pet.name()
     )));
-    let llama_cli = crate::pet::storage::llama_cli_path();
     let model = crate::pet::storage::gemma_model_path(Some(pet));
 
-    let llm = tokio::task::spawn_blocking(move || spawn_llm(&llama_cli, &model, &prompt))
+    let llm = tokio::task::spawn_blocking(move || spawn_llm(Path::new(""), &model, &prompt))
         .await
         .context("LLM spawn thread panicked")??;
 

@@ -111,96 +111,100 @@ Your review:"#,
     )
 }
 
-/// Spawn llama-cli.exe and stream the output line-by-line via a channel.
-/// Returns an `LlmOutput` whose `rx` channel receives lines as they are generated.
+/// Spawn native llama_cpp_2 for single-turn inference.
 pub fn spawn_llm(
-    llama_cli: &Path,
-    model: &Path,
+    _llama_cli: &Path, // Unused but kept for API compatibility
+    model_path: &Path,
     prompt: &str,
 ) -> Result<LlmOutput> {
-    if !llama_cli.exists() {
-        bail!(
-            "llama-cli.exe not found at {}. Run `rift hatch` first.",
-            llama_cli.display()
-        );
-    }
-    if !model.exists() {
-        bail!(
-            "Model not found at {}. Run `rift hatch` first.",
-            model.display()
-        );
+    if !model_path.exists() {
+        bail!("Model not found at {}. Run `rift hatch` first.", model_path.display());
     }
 
-    let cpu_threads = std::thread::available_parallelism()
-        .map(|n| n.get())
-        .unwrap_or(4)
-        .min(8) as u32;
-
-    let mut child = Command::new(llama_cli)
-        .args([
-            "--model",
-            &model.to_string_lossy(),
-            "--ctx-size",
-            "8192",
-            "--cache-type-k",
-            "q4_0",
-            "--threads",
-            &cpu_threads.to_string(),
-            "--temp",
-            "0.8",
-            "--repeat-penalty",
-            "1.1",
-            "--no-display-prompt",
-            "-p",
-            prompt,
-        ])
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null()) // suppress llama.cpp verbose logs
-        .spawn()
-        .context("Failed to spawn llama-cli.exe")?;
-
-    let stdout = child.stdout.take().context("No stdout")?;
+    let prompt_copy = prompt.to_string();
+    let model_path_buf = model_path.to_path_buf();
     let (tx, rx) = mpsc::channel::<String>();
 
     std::thread::spawn(move || {
-        use std::io::Read;
-        let mut reader = BufReader::new(stdout);
-        let mut current_line = String::new();
-        let mut buf = [0u8; 256];
-
-        loop {
-            match reader.read(&mut buf) {
-                Ok(0) => break, // EOF
-                Ok(n) => {
-                    let chunk = String::from_utf8_lossy(&buf[..n]);
-                    for c in chunk.chars() {
-                        if c == '\n' {
-                            if tx.send(current_line.clone()).is_err() { return; }
-                            current_line.clear();
-                        } else {
-                            current_line.push(c);
-                            // Flush partial line every 80 chars for real-time feel
-                            if current_line.len() >= 80 {
-                                if tx.send(current_line.clone()).is_err() { return; }
-                                current_line.clear();
-                            }
-                        }
-                    }
-                }
-                Err(_) => break,
-            }
+        if let Err(e) = run_inference_sync(&model_path_buf, &prompt_copy, tx.clone()) {
+            let _ = tx.send(format!("\nLLM Crash: {}", e));
         }
-        // Flush remaining
-        if !current_line.is_empty() {
-            let _ = tx.send(current_line);
-        }
-        let _ = child.wait();
     });
 
     Ok(LlmOutput { rx })
 }
 
-/// Spawns llama-server.exe and runs the agent loop.
+fn run_inference_sync(model_path: &Path, prompt: &str, tx: mpsc::Sender<String>) -> Result<()> {
+    use llama_cpp_2::llama_backend::LlamaBackend;
+    use llama_cpp_2::model::LlamaModel;
+    use llama_cpp_2::model::params::LlamaModelParams;
+    use llama_cpp_2::context::params::LlamaContextParams;
+    use std::num::NonZeroU32;
+
+    let backend = LlamaBackend::init()?;
+    let model_params = LlamaModelParams::default();
+    let model = LlamaModel::load_from_file(&backend, model_path, &model_params)
+        .context("Failed to load model")?;
+
+    let mut ctx_params = LlamaContextParams::default();
+    ctx_params = ctx_params.with_n_ctx(Some(NonZeroU32::new(8192).unwrap()));
+    let mut ctx = model.new_context(&backend, ctx_params).context("Failed to create context")?;
+
+    let tokens = model.str_to_token(prompt, llama_cpp_2::model::AddBos::Always)
+        .context("Failed to tokenize prompt")?;
+
+    let mut batch = llama_cpp_2::llama_batch::LlamaBatch::new(8192, 1);
+    let last_index = tokens.len().saturating_sub(1);
+    for (i, &token) in tokens.iter().enumerate() {
+        let is_last = i == last_index;
+        batch.add(token, i as i32, &[0], is_last).unwrap();
+    }
+
+    ctx.decode(&mut batch).context("Failed to decode prompt")?;
+
+    let mut n_cur = tokens.len() as i32;
+    let mut current_line = String::new();
+
+    loop {
+        // Simple greedy sampling
+        let mut candidates = ctx.token_data_array_ith(batch.n_tokens() - 1);
+        let id_token = candidates.sample_token_greedy();
+
+        if id_token == model.token_eos() || n_cur > 8192 {
+            break;
+        }
+
+        let token_bytes = model.token_to_bytes(id_token, llama_cpp_2::model::Special::Tokenize)
+            .unwrap_or_default();
+        let token_str = String::from_utf8_lossy(&token_bytes);
+
+        for c in token_str.chars() {
+            if c == '\n' {
+                if tx.send(current_line.clone()).is_err() { return Ok(()); }
+                current_line.clear();
+            } else {
+                current_line.push(c);
+                if current_line.len() >= 80 {
+                    if tx.send(current_line.clone()).is_err() { return Ok(()); }
+                    current_line.clear();
+                }
+            }
+        }
+
+        batch.clear();
+        batch.add(id_token, n_cur, &[0], true).unwrap();
+        ctx.decode(&mut batch).context("Failed to decode token")?;
+        n_cur += 1;
+    }
+
+    if !current_line.is_empty() {
+        let _ = tx.send(current_line);
+    }
+
+    Ok(())
+}
+
+/// Spawns native llama-cpp-2 for the agent loop
 pub async fn run_agent_loop(
     pet: &PetIdentity,
     path: &str,
@@ -208,59 +212,13 @@ pub async fn run_agent_loop(
     mode: AnalyzeMode,
     tui_tx: tokio_mpsc::UnboundedSender<TuiMsg>,
 ) -> Result<()> {
-    let _ = tui_tx.send(TuiMsg::Status("Starting llama-server.exe for Boost mode…".into()));
+    let _ = tui_tx.send(TuiMsg::Status("Starting native inference for Boost mode…".into()));
     
-    let server_path = crate::pet::storage::llama_server_path();
     let model_path = crate::pet::storage::qwen3_model_path(Some(pet));
-
-    if !server_path.exists() || !model_path.exists() {
-        bail!("llama-server.exe or Qwen3 model not found. Run `rift hatch` first.");
+    if !model_path.exists() {
+        bail!("Qwen3 model not found. Run `rift hatch` first.");
     }
 
-    let cpu_threads = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4).min(8) as u32;
-
-    let mut child = Command::new(&server_path)
-        .args([
-            "--model", &model_path.to_string_lossy(),
-            "--ctx-size", "32768",
-            "--cache-type-k", "q4_0", // TurboQuant 4-bit context
-            "--threads", &cpu_threads.to_string(),
-            "--port", "8080",
-            "--mmap",
-        ])
-        .stdout(Stdio::null())
-        .stderr(Stdio::piped())
-        .spawn()
-        .context("Failed to spawn llama-server.exe")?;
-
-    // Poll until the server accepts connections (up to 60s for massive model)
-    let _ = tui_tx.send(TuiMsg::Status("Waiting for llama-server to load model…".into()));
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(3))
-        .build()?;
-    let mut server_ready = false;
-    for _ in 0..60 {
-        tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
-        // Check if child already exited (crash)
-        if let Ok(Some(status)) = child.try_wait() {
-            // Collect stderr
-            let mut stderr_out = String::new();
-            if let Some(mut se) = child.stderr.take() {
-                use std::io::Read;
-                let _ = se.read_to_string(&mut stderr_out);
-            }
-            bail!("llama-server.exe exited early ({}). stderr:\n{}", status, stderr_out.lines().take(10).collect::<Vec<_>>().join("\n"));
-        }
-        if client.get("http://127.0.0.1:8080/health").send().await.is_ok() {
-            server_ready = true;
-            break;
-        }
-    }
-    if !server_ready {
-        let _ = child.kill();
-        bail!("llama-server.exe failed to become ready within 60 seconds.");
-    }
-    let _ = tui_tx.send(TuiMsg::Status("Server ready. Agent thinking…".into()));
     let root = Path::new(path);
     let source_files = crate::analysis::walker::walk_path(root, max_files).unwrap_or_default();
     let mut file_contents = std::collections::HashMap::new();
@@ -272,78 +230,52 @@ pub async fn run_agent_loop(
 
     let base_prompt = build_prompt(pet, "", mode).replace("=== CODE SUMMARY ===\n\n=== END SUMMARY ===", "You have access to tools via XML tags. Available tools:\n- <GrepClaw pattern=\"...\" />\n- <ExeClaw exe=\"...\" args=\"...\" />\nTo eject a file from context to save tokens, output </ReadClaw path=\"...\">");
 
-    let mut messages = vec![];
-
-    // Main interaction loop (simplified single-turn for now)
     let mut current_sys = base_prompt.clone();
     for (p, c) in &file_contents {
         current_sys.push_str(&format!("\n<ReadClaw path=\"{}\">\n{}\n</ReadClaw>\n", p, c));
     }
     
-    messages.push(serde_json::json!({ "role": "system", "content": current_sys }));
-    messages.push(serde_json::json!({ "role": "user", "content": "Review my code." }));
+    // Convert current_sys to simple prompt layout for native text-completion mode
+    let full_prompt = format!("<|im_start|>system\n{}<|im_end|>\n<|im_start|>user\nReview my code.<|im_end|>\n<|im_start|>assistant\n", current_sys);
 
-    let _ = tui_tx.send(TuiMsg::Status("Agent thinking…".into()));
-
-    let body = serde_json::json!({
-        "model": "qwen3",
-        "messages": messages,
-        "temperature": 0.7,
-        "stream": true,
-    });
-
-    let resp_result = client.post("http://127.0.0.1:8080/v1/chat/completions")
-        .json(&body)
-        .send().await;
-
-    if let Ok(mut resp) = resp_result {
+    let (tx, rx) = mpsc::channel::<String>();
+    let tui_tx_clone = tui_tx.clone();
+    
+    // Forward strings to TuiMsg::Output
+    std::thread::spawn(move || {
         let mut current_line = String::new();
-        let mut buffer = String::new();
-
-        while let Some(chunk) = resp.chunk().await.unwrap_or(None) {
-            let chunk_str = String::from_utf8_lossy(&chunk);
-            buffer.push_str(&chunk_str);
-
-            while let Some(idx) = buffer.find('\n') {
-                let line = buffer[..idx].to_string();
-                buffer = buffer[idx+1..].to_string();
-                let line = line.trim();
-                
-                if line.starts_with("data: ") {
-                    let data = &line[6..];
-                    if data == "[DONE]" { break; }
-                    
-                    if let Ok(json) = serde_json::from_str::<serde_json::Value>(data) {
-                        if let Some(delta) = json["choices"][0]["delta"]["content"].as_str() {
-                            for c in delta.chars() {
-                                if c == '\n' {
-                                    let _ = tui_tx.send(TuiMsg::Output(current_line.clone()));
-                                    current_line.clear();
-                                } else {
-                                    current_line.push(c);
-                                }
-                            }
-                            
-                            // Simple real-time tool detection display
-                            if current_line.ends_with("</ReadClaw>") {
-                                let _ = tui_tx.send(TuiMsg::Output(format!("  \x1b[35m[EJECTED FILE]\x1b[0m")));
-                                current_line.clear();
-                            }
-                            if current_line.ends_with("<GrepClaw") {
-                                let _ = tui_tx.send(TuiMsg::Output(format!("  \x1b[33m[RAN GREP]\x1b[0m")));
-                                current_line.clear();
-                            }
-                        }
-                    }
+        for chunk in rx {
+            for c in chunk.chars() {
+                if c == '\n' {
+                    let _ = tui_tx_clone.send(TuiMsg::Output(current_line.clone()));
+                    current_line.clear();
+                } else {
+                    current_line.push(c);
                 }
+            }
+            if current_line.ends_with("</ReadClaw>") {
+                let _ = tui_tx_clone.send(TuiMsg::Output("  \x1b[35m[EJECTED FILE]\x1b[0m".into()));
+                current_line.clear();
+            }
+            if current_line.ends_with("<GrepClaw") {
+                let _ = tui_tx_clone.send(TuiMsg::Output("  \x1b[33m[RAN GREP]\x1b[0m".into()));
+                current_line.clear();
             }
         }
         if !current_line.is_empty() {
-            let _ = tui_tx.send(TuiMsg::Output(current_line));
+            let _ = tui_tx_clone.send(TuiMsg::Output(current_line));
         }
-    }
+    });
 
-    let _ = child.kill();
+    let _ = tui_tx.send(TuiMsg::Status("Agent thinking…".into()));
+
+    // Run inference on a blocking thread
+    let _ = tokio::task::spawn_blocking(move || {
+        if let Err(e) = run_inference_sync(&model_path, &full_prompt, tx) {
+            let _ = tui_tx.send(TuiMsg::Output(format!("\nLLM Crash: {}", e)));
+        }
+    }).await;
+
     Ok(())
 }
 

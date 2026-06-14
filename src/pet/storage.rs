@@ -43,13 +43,9 @@ pub fn save_pet(pet: &PetIdentity) -> Result<()> {
     Ok(())
 }
 
-/// Return the path to the rift data directory on D: drive.
+/// Return the path to the rift data directory in APPDATA.
 pub fn data_dir() -> PathBuf {
-    PathBuf::from(r"D:\rift")
-}
-
-pub fn llama_dir() -> PathBuf {
-    data_dir().join("llama")
+    config_dir().expect("Failed to get APPDATA directory")
 }
 
 pub fn models_dir(pet: Option<&PetIdentity>) -> PathBuf {
@@ -59,14 +55,6 @@ pub fn models_dir(pet: Option<&PetIdentity>) -> PathBuf {
         }
     }
     data_dir().join("models")
-}
-
-pub fn llama_cli_path() -> PathBuf {
-    llama_dir().join("llama-cli.exe")
-}
-
-pub fn llama_server_path() -> PathBuf {
-    llama_dir().join("llama-server.exe")
 }
 
 pub fn gemma_model_path(pet: Option<&PetIdentity>) -> PathBuf {

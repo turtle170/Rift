@@ -1,6 +1,6 @@
 [package]
 name = "rift"
-version = "0.1.20"
+version = "0.1.22"
 edition = "2021"
 authors = ["turtle170"]
 description = "Rift — your desktop pet code reviewer"
@@ -45,16 +45,12 @@ sha2 = "0.10"
 # Async runtime + HTTP
 tokio = { version = "1", features = ["full"] }
 reqwest = { version = "0.12", features = ["stream", "rustls-tls", "json"], default-features = false }
-
-# Progress bars + parallel iterators
 indicatif = { version = "0.17", features = ["rayon"] }
+llama-cpp-2 = "0.1.146"
 rayon = "1"
 
 # Directory paths
 dirs = "5"
-
-# ZIP extraction
-zip = "2"
 
 # File walking + .gitignore awareness
 ignore = "0.4"

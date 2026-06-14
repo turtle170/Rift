@@ -8,7 +8,7 @@ use std::thread;
 
 use crate::llm::downloader::Downloader;
 use crate::pet::identity::{derive_identity, read_machine_guid};
-use crate::pet::storage::{llama_dir, load_pet, models_dir, save_pet};
+use crate::pet::storage::{load_pet, models_dir, save_pet};
 use crate::tui::spinner::Spinner;
 
 pub async fn run(no_boost: bool, redo: bool, download_dir: Option<String>) -> Result<()> {
@@ -35,26 +35,15 @@ pub async fn run(no_boost: bool, redo: bool, download_dir: Option<String>) -> Re
         save_pet(&pet)?;
     }
 
-    println!();
     print_pet_card(&pet.prefix, &pet.adjective, &pet.noun, &pet.stats)?;
     println!();
-
-    if !newly_hatched {
-        println!("  Your Rift is already hatched! Verifying dependencies...");
-        println!();
-    }
 
     if redo {
         println!("  \x1b[31m🗑\x1b[0m  Deleting existing models directory (--redo)...");
         let _ = std::fs::remove_dir_all(&crate::pet::storage::models_dir(Some(&pet)));
     }
 
-    // ── Download llama.cpp (GPU-aware) ────────────────────────────────────────
-    println!("  \x1b[33m⬇\x1b[0m  Acquiring llama.cpp...");
     let dl = Downloader::new()?;
-    let gpu_kind = dl.download_llama(&llama_dir()).await?;
-    println!("  \x1b[32m✓\x1b[0m  llama.cpp ready ({})", gpu_kind.label());
-    println!();
 
     println!("  \x1b[33m⬇\x1b[0m  Acquiring LLM models...");
     println!("     \x1b[90mDownload is resumable — feel free to Ctrl+C and continue later.\x1b[0m");
@@ -65,7 +54,7 @@ pub async fn run(no_boost: bool, redo: bool, download_dir: Option<String>) -> Re
     if newly_hatched {
         println!("  \x1b[32m✓\x1b[0m  Pet saved. Run \x1b[36mrift analyze <path>\x1b[0m to begin your first review!");
     } else {
-        println!("  \x1b[32m✓\x1b[0m  Dependencies updated. Run \x1b[36mrift analyze <path>\x1b[0m to review code.");
+        println!("  \x1b[32m✓\x1b[0m  Models updated. Run \x1b[36mrift analyze <path>\x1b[0m to review code.");
     }
     println!();
 

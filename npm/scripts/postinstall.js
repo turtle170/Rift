@@ -11,12 +11,31 @@ const crypto = require('crypto');
 const { execSync } = require('child_process');
 
 const REPO = 'turtle170/Rift';
-const EXE_ASSET = 'rift.exe';
-const SHA_ASSET = 'rift.exe.sha256';
 
 function log(msg) { process.stdout.write(`\x1b[36m[rift]\x1b[0m ${msg}\n`); }
 function warn(msg) { process.stdout.write(`\x1b[33m[rift]\x1b[0m ${msg}\n`); }
 function err(msg) { process.stderr.write(`\x1b[31m[rift]\x1b[0m ${msg}\n`); }
+
+function determineExeAsset() {
+  let asset = 'rift-cpu.exe'; // fallback
+  try {
+    const gpuInfo = execSync('powershell -NoProfile -Command "Get-CimInstance win32_VideoController | Select-Object -ExpandProperty Name"', { encoding: 'utf8' }).toLowerCase();
+    log(`Detected GPU: ${gpuInfo.trim()}`);
+    // If we see NVIDIA, AMD, Radeon, or GeForce, assume discrete GPU capable of Vulkan
+    if (gpuInfo.includes('nvidia') || gpuInfo.includes('amd') || gpuInfo.includes('radeon') || gpuInfo.includes('geforce')) {
+      asset = 'rift-vulkan.exe';
+      log(`Choosing Vulkan backend for better performance.`);
+    } else {
+      log(`Choosing CPU backend (Integrated/Unknown GPU detected).`);
+    }
+  } catch (e) {
+    warn(`Could not detect GPU (${e.message}). Defaulting to CPU backend.`);
+  }
+  return asset;
+}
+
+const EXE_ASSET = determineExeAsset();
+const SHA_ASSET = EXE_ASSET + '.sha256';
 
 function getDestDir() {
   const appLocal = process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local');
@@ -104,7 +123,7 @@ async function main() {
 
   const destDir = getDestDir();
   fs.mkdirSync(destDir, { recursive: true });
-  const destExe = path.join(destDir, EXE_ASSET);
+  const destExe = path.join(destDir, 'rift.exe');
 
   log(`Downloading ${EXE_ASSET} v${release.tag_name}...`);
   await downloadFile(exeAsset.browser_download_url, destExe);

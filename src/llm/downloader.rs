@@ -6,15 +6,6 @@ use std::io::Write;
 use std::path::Path;
 
 use tokio::io::AsyncWriteExt;
-use zip::ZipArchive;
-
-use crate::llm::gpu_detect::{detect_gpu, GpuKind};
-
-// llama.cpp b9606 release assets
-const LLAMA_VULKAN_URL: &str =
-    "https://github.com/ggml-org/llama.cpp/releases/download/b9606/llama-b9606-bin-win-vulkan-x64.zip";
-const LLAMA_CPU_URL: &str =
-    "https://github.com/ggml-org/llama.cpp/releases/download/b9606/llama-b9606-bin-win-cpu-x64.zip";
 
 const GEMMA_MODEL_URL: &str =
     "https://huggingface.co/unsloth/gemma-4-E4B-it-GGUF/resolve/main/gemma-4-E4B-it-Q6_K.gguf";
@@ -38,39 +29,6 @@ impl Downloader {
             client,
             multi: MultiProgress::new(),
         })
-    }
-
-    /// Detect GPU, pick the right llama.cpp build, download + extract it.
-    pub async fn download_llama(&self, dest_dir: &Path) -> Result<GpuKind> {
-        std::fs::create_dir_all(dest_dir)?;
-
-        let cli_path = dest_dir.join("llama-cli.exe");
-
-        // Detect GPU every time so we can report the kind even if already downloaded.
-        print!("  Detecting GPU... ");
-        let _ = std::io::stdout().flush();
-        let gpu = detect_gpu();
-        println!("{}", gpu.label());
-
-        if cli_path.exists() {
-            println!("  ✓ llama-cli.exe already present, skipping download.");
-            return Ok(gpu);
-        }
-
-        let (url, label) = match &gpu {
-            GpuKind::Discrete => (LLAMA_VULKAN_URL, "llama.cpp b9606 (Vulkan — discrete GPU)"),
-            _ => (LLAMA_CPU_URL, "llama.cpp b9606 (CPU — integrated/unknown GPU)"),
-        };
-
-        let zip_path = dest_dir.join("llama.zip");
-        self.download_file(url, &zip_path, label).await?;
-
-        println!("  Extracting llama.cpp...");
-        extract_zip(&zip_path, dest_dir)?;
-        std::fs::remove_file(&zip_path).ok();
-        println!("  ✓ llama.cpp extracted to {}", dest_dir.display());
-
-        Ok(gpu)
     }
 
     /// Download both Gemma and Qwen3 models to dest_dir, supporting resume.
@@ -201,25 +159,3 @@ fn progress_style() -> ProgressStyle {
         .progress_chars("█▉▊▋▌▍▎▏  ")
 }
 
-fn extract_zip(zip_path: &Path, dest_dir: &Path) -> Result<()> {
-    let file = std::fs::File::open(zip_path)
-        .with_context(|| format!("Cannot open {}", zip_path.display()))?;
-    let mut archive = ZipArchive::new(file).context("Invalid ZIP archive")?;
-
-    for i in 0..archive.len() {
-        let mut entry = archive.by_index(i)?;
-        let outpath = dest_dir.join(entry.name());
-
-        if entry.name().ends_with('/') {
-            std::fs::create_dir_all(&outpath)?;
-        } else {
-            if let Some(parent) = outpath.parent() {
-                std::fs::create_dir_all(parent)?;
-            }
-            let mut outfile = std::fs::File::create(&outpath)?;
-            std::io::copy(&mut entry, &mut outfile)?;
-        }
-    }
-
-    Ok(())
-}
