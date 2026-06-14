@@ -246,29 +246,57 @@ pub async fn run_agent_loop(
         "model": "qwen3",
         "messages": messages,
         "temperature": 0.7,
+        "stream": true,
     });
 
-    let resp = client.post("http://127.0.0.1:8080/v1/chat/completions")
+    let resp_result = client.post("http://127.0.0.1:8080/v1/chat/completions")
         .json(&body)
         .send().await;
 
-    if let Ok(r) = resp {
-        if let Ok(json) = r.json::<serde_json::Value>().await {
-            if let Some(content) = json["choices"][0]["message"]["content"].as_str() {
-                let mut lines = content.lines();
-                while let Some(line) = lines.next() {
-                    let _ = tui_tx.send(TuiMsg::Output(line.to_string()));
+    if let Ok(mut resp) = resp_result {
+        let mut current_line = String::new();
+        let mut buffer = String::new();
+
+        while let Some(chunk) = resp.chunk().await.unwrap_or(None) {
+            let chunk_str = String::from_utf8_lossy(&chunk);
+            buffer.push_str(&chunk_str);
+
+            while let Some(idx) = buffer.find('\n') {
+                let line = buffer[..idx].to_string();
+                buffer = buffer[idx+1..].to_string();
+                let line = line.trim();
+                
+                if line.starts_with("data: ") {
+                    let data = &line[6..];
+                    if data == "[DONE]" { break; }
                     
-                    // Simple tool parsing logic could go here
-                    if line.contains("</ReadClaw") {
-                        // Ejected!
-                        let _ = tui_tx.send(TuiMsg::Output(format!("\x1b[35m[EJECTED FILE]\x1b[0m")));
-                    }
-                    if line.contains("<GrepClaw") {
-                        let _ = tui_tx.send(TuiMsg::Output(format!("\x1b[33m[RAN GREP]\x1b[0m")));
+                    if let Ok(json) = serde_json::from_str::<serde_json::Value>(data) {
+                        if let Some(delta) = json["choices"][0]["delta"]["content"].as_str() {
+                            for c in delta.chars() {
+                                if c == '\n' {
+                                    let _ = tui_tx.send(TuiMsg::Output(current_line.clone()));
+                                    current_line.clear();
+                                } else {
+                                    current_line.push(c);
+                                }
+                            }
+                            
+                            // Simple real-time tool detection display
+                            if current_line.ends_with("</ReadClaw>") {
+                                let _ = tui_tx.send(TuiMsg::Output(format!("  \x1b[35m[EJECTED FILE]\x1b[0m")));
+                                current_line.clear();
+                            }
+                            if current_line.ends_with("<GrepClaw") {
+                                let _ = tui_tx.send(TuiMsg::Output(format!("  \x1b[33m[RAN GREP]\x1b[0m")));
+                                current_line.clear();
+                            }
+                        }
                     }
                 }
             }
+        }
+        if !current_line.is_empty() {
+            let _ = tui_tx.send(TuiMsg::Output(current_line));
         }
     }
 
