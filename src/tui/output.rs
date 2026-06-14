@@ -223,11 +223,8 @@ pub fn run_output_tui(
             f.render_widget(bottom_para, chunks[2]);
         })?;
 
-        if done {
-            // Give it one extra render then exit
-            std::thread::sleep(Duration::from_millis(32));
-            break;
-        }
+        // Remove the auto-break so the user can read the final output
+        // The loop will now only break when the user presses 'q'
     }
 
     // Cleanup
