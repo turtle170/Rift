@@ -73,6 +73,11 @@ enum Commands {
         #[command(flatten)]
         mode_args: ModeArgs,
     },
+    /// Open an interactive chat session with your Rift pet (uses Boost/Qwen3)
+    Interactive {
+        /// Optional path for codebase context
+        path: Option<String>,
+    },
 }
 
 #[tokio::main]
@@ -126,6 +131,9 @@ async fn main() -> Result<()> {
         }
         Commands::Grill { path, max_files, .. } => {
             commands::analyze::run(&path, max_files, commands::analyze::AnalyzeMode::Grill, engine_mode).await?;
+        }
+        Commands::Interactive { path } => {
+            commands::interactive::run(path).await?;
         }
     }
 

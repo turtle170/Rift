@@ -210,14 +210,38 @@ pub async fn run_agent_loop(
             "--mmap",
         ])
         .stdout(Stdio::null())
-        .stderr(Stdio::null())
+        .stderr(Stdio::piped())
         .spawn()
         .context("Failed to spawn llama-server.exe")?;
 
-    // Wait for server to boot
-    tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
-
-    // Walk files to read initial context
+    // Poll until the server accepts connections (up to 60s for massive model)
+    let _ = tui_tx.send(TuiMsg::Status("Waiting for llama-server to load model…".into()));
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(3))
+        .build()?;
+    let mut server_ready = false;
+    for _ in 0..60 {
+        tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+        // Check if child already exited (crash)
+        if let Ok(Some(status)) = child.try_wait() {
+            // Collect stderr
+            let mut stderr_out = String::new();
+            if let Some(mut se) = child.stderr.take() {
+                use std::io::Read;
+                let _ = se.read_to_string(&mut stderr_out);
+            }
+            bail!("llama-server.exe exited early ({}). stderr:\n{}", status, stderr_out.lines().take(10).collect::<Vec<_>>().join("\n"));
+        }
+        if client.get("http://127.0.0.1:8080/health").send().await.is_ok() {
+            server_ready = true;
+            break;
+        }
+    }
+    if !server_ready {
+        let _ = child.kill();
+        bail!("llama-server.exe failed to become ready within 60 seconds.");
+    }
+    let _ = tui_tx.send(TuiMsg::Status("Server ready. Agent thinking…".into()));
     let root = Path::new(path);
     let source_files = crate::analysis::walker::walk_path(root, max_files).unwrap_or_default();
     let mut file_contents = std::collections::HashMap::new();
@@ -229,7 +253,6 @@ pub async fn run_agent_loop(
 
     let base_prompt = build_prompt(pet, "", mode).replace("=== CODE SUMMARY ===\n\n=== END SUMMARY ===", "You have access to tools via XML tags. Available tools:\n- <GrepClaw pattern=\"...\" />\n- <ExeClaw exe=\"...\" args=\"...\" />\nTo eject a file from context to save tokens, output </ReadClaw path=\"...\">");
 
-    let client = reqwest::Client::new();
     let mut messages = vec![];
 
     // Main interaction loop (simplified single-turn for now)
