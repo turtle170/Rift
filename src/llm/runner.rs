@@ -142,7 +142,7 @@ pub fn spawn_llm(
             &model.to_string_lossy(),
             "--ctx-size",
             "8192",
-            "--ctk",
+            "--cache-type-k",
             "q4_0",
             "--threads",
             &cpu_threads.to_string(),
@@ -204,7 +204,7 @@ pub async fn run_agent_loop(
         .args([
             "--model", &model_path.to_string_lossy(),
             "--ctx-size", "32768",
-            "--ctk", "q4_0", // TurboQuant 4-bit context
+            "--cache-type-k", "q4_0", // TurboQuant 4-bit context
             "--threads", &cpu_threads.to_string(),
             "--port", "8080",
             "--mmap",
